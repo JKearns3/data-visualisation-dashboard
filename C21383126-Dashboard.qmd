@@ -1,0 +1,444 @@
+---
+title: "Independent Project"
+subtitle: "What really helps graduates succeed?"
+author: "Jennifer Kearns"
+student-number: "C21383126"
+Programme-Code: "TU856"
+format: 
+  html:
+    theme: simplex
+    self-contained: true
+    code-fold: true
+    dashboard: true
+---
+
+This dashboard explores what factors actually matter for career success after college - academic performance, soft skills, or hands-on experience? Using two datasets, the analysis compares salary growth and career satisfaction across fields of study, then focuses on what gives students the edge in employability. From internships and GPA, to networking and soft skills, this dashboard looks into what employers really value most and what students should focus on to boost their chances of getting hired.
+
+
+```{r setup-libraries, include=FALSE}
+# Function to quietly install and load packages
+quiet_library <- function(pkg) {
+  suppressMessages(suppressWarnings({
+    if (!requireNamespace(pkg, quietly = TRUE)) {
+      install.packages(pkg, quiet = TRUE) # Install without messages
+    }
+    library(pkg, character.only = TRUE) # Load silently
+  }))
+}
+
+# Install & Load Packages Silently
+quiet_library("ggplot2")
+quiet_library("plotly")
+quiet_library("gapminder") #An excerpt of the data available at Gapminder.org. For each of 142 countries, the package provides values for life expectancy, GDP per capita, and population, every five years, from 1952 to 2007.
+quiet_library("tidyverse")
+quiet_library("ggstream") #For Stream graphs
+quiet_library("fmsb")  # For radar chart
+quiet_library("GGally")  # For parallel co-ordinates chart
+
+quiet_library("cowplot") # For organising plots into a grid
+quiet_library("patchwork") # For matrix layout
+quiet_library("ggcorrplot") # For Correlation Heatmaps 
+quiet_library("corrplot") # For correlation matrices
+quiet_library("PerformanceAnalytics")# For standardised skewness and kurtosis
+quiet_library("Hmisc") # For generating correlation
+```
+
+```{r setup-data, include=FALSE}
+# Setup path to the data 
+mydata <- file.path("C:","Users","jenni", "Documents", 'TUD', 'Year4', 'Sem2', 'VD', 'Project', 'C21383126')
+
+datapath <- file.path(mydata,'education_career_success.csv')
+datapath2 <- file.path(mydata, 'degrees-that-pay-back.csv')
+
+# Load it into the dataframe 
+education <- read.csv(datapath)
+degrees <- read.csv(datapath2)
+
+# Only need to keep undergraduate major and percent change columns
+degrees <- degrees %>%
+  select(Undergraduate.Major, Percent.change.from.Starting.to.Mid.Career.Salary)
+
+# Rename field of study values to match undergraduate major values
+education <- education %>%
+  mutate(Field_of_Study = recode(Field_of_Study,
+      "Arts" = "Art History",
+      "Law" = "Political Science",
+      "Medicine" = "Nursing",
+      "Engineering" = "Mechanical Engineering",
+      "Business" = "Business Management",
+      "Mathematics" = "Math"
+      ))
+
+# Merge datasets - percentage column based on field of study
+merged_df <- education %>%
+  left_join(degrees, by = c("Field_of_Study" = "Undergraduate.Major"))
+
+# Rename column
+merged_df <- merged_df %>%
+  rename(Percent_Change = "Percent.change.from.Starting.to.Mid.Career.Salary")
+
+# view(merged_df)
+
+# Check that all were matched
+sum(is.na(merged_df$Percent_Change))
+
+# Add new column with predicted mid career salary
+merged_df <- merged_df %>%
+  mutate(Pred_Mid_Career_Salary = Starting_Salary * (1 + Percent_Change/100))
+
+```
+
+
+::: {.panel-fill layout="[ [1] ]" style="max-width: 800px; margin: auto;"}
+
+::: panel-tabset
+
+### Salary Growth
+
+::: panel
+```{r}
+# Stacked Area Chart
+
+# Summarize Salary by stage and field
+salary_summary <- merged_df %>%
+  select(Field_of_Study, Starting_Salary, Pred_Mid_Career_Salary) %>%
+  pivot_longer(cols = c(Starting_Salary, Pred_Mid_Career_Salary), 
+               names_to = "Career_Stage", 
+               values_to = "Salary") %>%
+  group_by(Career_Stage, Field_of_Study) %>%
+  summarise(Avg_Salary = mean(Salary, na.rm = TRUE), .groups = "drop") %>%
+  mutate(Career_Stage = recode(Career_Stage, 
+                               "Starting_Salary" = "Early Career",
+                               "Pred_Mid_Career_Salary" = "Mid Career"), # Rename Labels to early and mid career
+         Career_Stage = factor(Career_Stage, levels = c("Early Career", "Mid Career"))) # Ensure right order
+
+# Create the Stacked Area Chart
+salary_area_chart <- ggplot(data = salary_summary, 
+                            aes(x = Career_Stage, 
+                                y = Avg_Salary, 
+                                fill = Field_of_Study, 
+                                group = Field_of_Study, 
+                                text = paste("<b>Field:</b> ", Field_of_Study, 
+                                             "<br><b>Career Stage:</b> ", Career_Stage,
+                                             "<br><b>Avg Salary ($):</b> ", scales::comma(Avg_Salary)))) +
+  geom_area(position = "stack", alpha = 0.8) +  
+  scale_fill_brewer(palette = "Set3") +  
+  scale_y_continuous(labels = scales::comma) +  
+  labs(
+    title = "Salary Growth % by Field Over Career Stages",
+    x = "Career Stage",
+    y = "Average Salary ($)",
+    fill = "Field of Study"
+  ) +
+  theme_minimal()
+
+# Convert to Interactive Plotly Chart
+ggplotly(salary_area_chart, tooltip = "text")
+
+```
+
+This stacked area chart shows the predicted salary growth in different fields from their starting salary to their mid-career salary. The salary increase varies across fields, with fields like maths, business, and engineering showing the most significant growth.
+
+### 
+
+```{r}
+# Aggregate data to count individuals per field of study
+bubble_data <- merged_df %>%
+  group_by(Field_of_Study) %>%
+  summarise(
+    avg_satisfaction = mean(Career_Satisfaction, na.rm = TRUE),
+    avg_salary = mean(Pred_Mid_Career_Salary, na.rm = TRUE),
+    count = n()
+  )
+
+# Create Bubble Chart
+bubble_chart <- ggplot(bubble_data, aes(x = avg_satisfaction, y = avg_salary, size = count, color = Field_of_Study)) +
+  geom_point(alpha = 0.7) +  # Transparency for overlapping points
+  scale_size(range = c(3, 15)) +  # Adjust bubble sizes
+  labs(title = "Career Satisfaction vs Predicted Mid-Career Salary",
+       x = "Average Career Satisfaction", y = "Predicted Mid-Career Salary", 
+       size = "Count of People", color = "Field of Study") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  scale_y_continuous(labels = scales::label_comma())
+
+ggplotly(bubble_chart)
+```
+
+This bubble chart shows the relationship between career satisfaction and mid-career salary for different fields of study. Fields like Art History, Maths, and Political Science have the most students, and they also report some of the highest career satisfaction scores along with strong salary growth. 
+
+Nursing students have lower predicted salaries, but they still report high satisfaction, suggesting that factors other than salary contribute to their career satisfaction. Business Management graduates have relatively high predicted salaries but lower career satisfaction, indicating that salary alone is not always the best measure of job happiness. 
+
+Overall, this chart highlights how salary growth often aligns with career satisfaction, but there are exceptions where non-monetary factors play a significant role.
+:::
+
+### Average Job Offers
+::: panel
+```{r}
+# Calculate deviation from average 
+internship_diverge <- merged_df %>%
+  group_by(Internships_Completed) %>%
+  summarise(mean_job_offers = mean(Job_Offers), .groups = "drop") %>%
+  mutate(overall_avg = mean(mean_job_offers), deviation = mean_job_offers - overall_avg)
+
+# Divergent bar chart
+p_bar_internships <- internship_diverge %>%
+  ggplot(aes(x = factor(Internships_Completed),
+             y = deviation, 
+             fill = deviation,
+             text = paste("Internships Completed:", Internships_Completed,
+                          "<br>Deviation:", round(deviation, 3)))) +
+  geom_col(position = "dodge") +  # Dodge to show bars side by side
+  geom_hline(yintercept = 0, color = "black", linetype = "dashed") +  # Add a baseline at 0
+  labs(title = "Divergent Bar Chart of Job Offers by Internships Completed",
+       x = "Internships Completed",
+       y = "Deviation from Average Job Offers",
+       fill = "Above Average") +
+  theme_bw()
+
+ggplotly(p_bar_internships, tooltip = "text")
+
+```
+
+This chart shows that students who did less internships got less job offers. Students who did no internships got significantly less job offers than the average student. Students with 4 internships received significantly more job offers, reinforcing the importance of hands-on experience in hiring decisions.
+
+```{r}
+# Stacked Bar Chart - Job Offers by Internships Completed
+internship_job_offers <- merged_df %>%
+  group_by(Internships_Completed, Job_Offers) %>%
+  summarise(Count = n(), .groups = "drop")
+
+# Create Stacked Bar Chart
+p_stacked_bar <- ggplot(internship_job_offers, 
+                        aes(x = factor(Internships_Completed),
+                            y = Count, 
+                            fill = factor(Job_Offers),
+                            text = paste("Internships Completed:", Internships_Completed,
+                                         "<br>Job Offers:", Job_Offers,
+                                         "<br>Count:", Count))) +
+  geom_bar(stat = "identity", position = "stack", alpha = 0.8) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Job Offers by Internship Completed",
+       x = "Internships Completed",
+       y = "Number of Students",
+       fill = "Job Offers") +
+  theme_minimal()
+
+# Convert to Interactive Plotly Chart
+ggplotly(p_stacked_bar, tooltip = "text")
+```
+
+This graph shows the number of students with different numbers of job offers, grouped by internship experience. Students who completed more internships were more likely to receive multiple job offers, showing a direct link between internship experience and employability.
+
+```{r}
+# Calculate deviation from average 
+gpa_diverge <- merged_df %>%
+  mutate(University_GPA = round(University_GPA, 1)) %>% # Round gpa to make it more readable
+  group_by(University_GPA) %>%
+  summarise(mean_job_offers = mean(Job_Offers), .groups = "drop") %>%
+  mutate(overall_avg = mean(mean_job_offers), deviation = mean_job_offers - overall_avg)
+
+# Divergent bar chart
+p_bar_gpa <- gpa_diverge %>%
+  ggplot(aes(x = factor(University_GPA), 
+             y = deviation, 
+             fill = deviation,
+             text = paste("University GPA:", University_GPA,
+                          "<br>Deviation:", round(deviation,3)))) +
+  geom_col(position = "dodge") +  # Dodge to show bars side by side
+  geom_hline(yintercept = 0, color = "black", linetype = "dashed") +  # Add a baseline at 0
+  labs(title = "Divergent Bar Chart of Job Offers by University GPA",
+       x = "University GPA",
+       y = "Deviation from Average Job Offers",
+       fill = "Above Average") +
+  theme_bw()
+
+ggplotly(p_bar_gpa, tooltip = "text")
+```
+
+This chart shows the deviation from average job offers based on university GPA. Unlike internships, GPA does not show a clear relationship with job offers. Students with both high and low GPAs received a mix of above and below job offers, suggesting that GPA alone is not a strong predictor of job offers. Instead, other factors such as internships and experience are likely to be more important.
+
+```{r}
+# Career Sucess Factors
+factor_comparison <- merged_df %>%
+  select(Networking_Score, Soft_Skills_Score, Projects_Completed, Job_Offers) %>%
+  pivot_longer(cols = c(Networking_Score, Soft_Skills_Score, Projects_Completed), 
+               names_to = "Factor", values_to = "Value") %>%
+  group_by(Factor, Value) %>%
+  summarise(Avg_Job_Offers = mean(Job_Offers, na.rm = TRUE), .groups = "drop")
+
+# Create Grouped Bar Chart
+p_grouped_bar <- ggplot(factor_comparison, 
+                        aes(x = factor(Value), 
+                            y = Avg_Job_Offers, 
+                            fill = Factor,
+                            text = paste("Factor:", Factor,
+                                         "<br>Value:", Value,
+                                         "<br>Average Job Offers:",round(Avg_Job_Offers,2)))) +
+  geom_col(position = "dodge", alpha = 0.8) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Comparison of Career Success Factors",
+       x = "Value (e.g., Networking Score, Soft Skills Score, Projects)",
+       y = "Average Job Offers",
+       fill = "Career Success Factor") +
+  theme_minimal()
+
+# Convert to Interactive Plotly Chart
+ggplotly(p_grouped_bar, tooltip = "text")
+```
+
+This bar chart compares the amount of job offers given to students based on their networking score, amount of projects completed, and their soft skills score. Although each factor peaks around 6-8, there is not an obvious trend in any of these factors to predict how many job offers a student will receive. This indicates that, rather than any single factor predicting job offers, a combination of networking, projects, and soft skills may play a role.
+
+:::
+
+### Combined Factors
+::: panel
+```{r include=FALSE}
+# Add a new column - Soft skills: networking, soft skills
+# Add new column - Experience: projects, and interships
+# Column with total score - combined + GPA
+merged_df <- merged_df %>%
+  mutate(C_Soft_Skills_Score = Networking_Score + Soft_Skills_Score,
+         Experience_Score = Projects_Completed + Internships_Completed,
+         University_Score = University_GPA + (1001 - University_Ranking), # Higher rank = better
+         Total_Score = C_Soft_Skills_Score + Experience_Score + round(University_GPA,1))
+```
+
+```{r include=FALSE}
+# Aggregate average job offers for soft skills
+aggregated_soft_skills <- merged_df %>%
+  group_by(C_Soft_Skills_Score) %>%
+  summarise(Avg_Job_Offers = mean(Job_Offers, na.rm = TRUE), .groups = "drop")
+
+# Aggregate average job offers for experience
+aggregated_experience <- merged_df %>%
+  group_by(Experience_Score) %>%
+  summarise(Avg_Job_Offers = mean(Job_Offers, na.rm = TRUE), .groups = "drop")
+
+# Aggregate average job offers for gpa
+aggregated_gpa <- merged_df %>%
+  mutate(University_GPA = round(University_GPA,1)) %>% # Round to make cleaner to read
+  group_by(University_GPA) %>%
+  summarise(Avg_Job_Offers = mean(Job_Offers, na.rm = TRUE), .groups = "drop")
+
+```
+
+```{r}
+# Job Offers by Soft Skills Score
+p_grouped_ss <- ggplot(aggregated_soft_skills, 
+                       aes(x = factor(C_Soft_Skills_Score), 
+                           y = Avg_Job_Offers, 
+                           fill = factor(C_Soft_Skills_Score),
+                           text = paste("Soft Skills Score:", C_Soft_Skills_Score,
+                                        "<br>Average Job Offers:", round(Avg_Job_Offers,2)))) +
+  geom_col(position = "dodge", alpha = 0.8) +
+  scale_fill_viridis_d() +
+  labs(title = "Impact of Soft Skills Score on Job Offers",
+       x = "Soft Skills Score",
+       y = "Average Job Offers",
+       fill = "Soft Skills Score") +
+  theme_minimal()
+
+ggplotly(p_grouped_ss, tooltip = "text")
+
+```
+
+This chart shows the effect that soft skills (a combination of soft skills, and networking scores) has on job offers. Job offers increase slightly with higher soft skills score, peaking at around 18, but the effect is not strong.
+
+```{r}
+# Job Offers by Experience Score
+p_grouped_ex <- ggplot(aggregated_experience, 
+                       aes(x = factor(Experience_Score), 
+                           y = Avg_Job_Offers, 
+                           fill = factor(Experience_Score),
+                           text = paste("Experience Score:", Experience_Score,
+                                        "<br>Average Job Offers:", round(Avg_Job_Offers,2)))) +
+  geom_col(position = "dodge", alpha = 0.8) +
+  scale_fill_viridis_d() +
+  labs(title = "Impact of Experience Score on Job Offers",
+       x = "Experience Score",
+       y = "Average Job Offers",
+       fill = "Experience Score") +
+  theme_minimal()
+
+ggplotly(p_grouped_ex, tooltip = "text")
+
+```
+
+This chart illustrates the importance of experience (a combination of internships and projects completed). Although it fluctuates, experience score shows a positive impact on job offers, with peaks at 5,8, and 13.
+
+```{r}
+p_grouped_gpa <- ggplot(aggregated_gpa, 
+                        aes(x = factor(University_GPA), 
+                            y = Avg_Job_Offers, 
+                            fill = factor(University_GPA),
+                                          text = paste("University GPA:", University_GPA,
+                                        "<br>Average Job Offers:", round(Avg_Job_Offers,2)))) +
+  geom_col(position = "dodge", alpha = 1) +
+  scale_fill_viridis_d() +
+  labs(title = "Impact of University GPA on Job Offers",
+       x = "University GPA",
+       y = "Average Job Offers",
+       fill = "University GPA") +
+  theme_minimal()
+
+ggplotly(p_grouped_gpa, tooltip = "text")
+```
+
+This graph looks at the effect of university GPA on job offers. It is more varied than the other factors, but job offers peak at 2.9 and 3.6, showing that while GPA has some impact, it is not as strong as experience or soft skills.
+
+```{r include=FALSE}
+# Normalise soft skills score to fit 0-13 range of experience score
+merged_df <- merged_df %>%
+  mutate(Soft_Skills_Score_Norm = round(C_Soft_Skills_Score * (13 / 20),0))
+```
+
+```{r}
+# Convert data to long format
+trend_data <- merged_df %>%
+  select(Experience_Score, Soft_Skills_Score_Norm, Job_Offers) %>%
+  pivot_longer(cols = c(Experience_Score, Soft_Skills_Score_Norm), 
+               names_to = "Factor", values_to = "Score_Level") %>%
+  group_by(Factor, Score_Level) %>%
+  summarise(Avg_Job_Offers = mean(Job_Offers, na.rm = TRUE), .groups = "drop")
+
+# Add a row where Soft_Skills_Score_Norm is 0 - so that there is the same number of values for each one
+trend_data <- trend_data %>%
+  bind_rows(tibble(Factor = "Soft_Skills_Score_Norm", Score_Level = 0, Avg_Job_Offers = 0))
+
+# Create static lines across all frames
+static_lines <- ggplot(trend_data, aes(x = Score_Level, y = Avg_Job_Offers, color = Factor, group = Factor)) +
+  geom_line(size = 1, alpha = 0.5)  # Lines always visible
+
+
+# Animated multi-line trend chart
+animated_trend <- static_lines + 
+  geom_point(aes(frame = Score_Level), size = 2) + # Only need to animate points - lines are always there
+  scale_color_manual(values = c("Experience_Score" = "blue", "Soft_Skills_Score_Norm" = "red")) +
+  labs(title = "Job Offers by Experience & Soft Skills Score",
+       x = "Score Level",
+       y = "Average Job Offers",
+       color = "Factor") +
+  theme_minimal()
+
+# Convert to interactive animation
+ggplotly(animated_trend) %>%
+  animation_opts(frame = 1000, easing = "linear")
+```
+
+This animated chart shows that experience and soft skills are nearly equally important in employability, as the number of job offers remains very similar across most levels. 
+
+However, when both scores are low, soft skills tend to receive slightly more job offers than experience. This suggests that employers may place a higher value on interpersonal and communication abilities when candidates have minimal practical experience.
+
+When both scores are high, experience results in slightly more job offers than soft skills. This indicates that while soft skills remain important, hands-on experience (such as internships and projects) may become the deciding factor in securing more job opportunities.
+
+This suggests that a balance of both experience and soft skills is ideal.
+
+
+Conclusion:
+
+While salary growth and career satisfaction vary across fields, they don't always align - some high-paying fields don't guarantee higher satisfaction. When it comes to job offers, internships and real-world experience play a larger role than GPA alone. Soft skills are just as important as experience, especially for students with less practical work. Ultimately, the data shows that a balanced mix of soft skills and experience gives graduates the best shot at early career success.
+
+:::
+:::
+:::
